@@ -148,6 +148,23 @@ podcast-translator/
 - 零交差率: 高調波に引きずられて 1000Hz+ の値が出る → 不採用
 - 自己相関法: 70-400Hz のラグ範囲でピーク検出、有声音判定付きで正確な F0 を取得
 
+### GitHub Actions (CPU) 環境の制約
+- F0 推定が不正確になる場合がある（男女とも 90Hz 台に推定され、全員 male 判定）
+- GPU/MPS なしのため pyannote の推論も遅い
+- 短い音声では F0 のサンプル数が不足しやすい
+- フォールバック: F0 で性別区別不可の場合、発話量順でメタデータの話者順にマッチング
+
+## 将来計画: Mac mini ローカルホスト版
+
+GitHub Actions 版は手軽だが精度に限界がある。Mac mini を常時稼働サーバーとして使うローカル版を構築予定。
+
+### 改善ポイント
+- **F0 推定の精度向上**: MPS (Apple Silicon GPU) で pyannote を高速・高精度に実行
+- **`--cookies-from-browser` の直接利用**: ローカルの Chrome cookies をリアルタイムで使えるため、cookies エクスポート・更新の運用が不要
+- **長時間音声の対応**: GitHub Actions の 60 分タイムアウト制限がなくなる
+- **Whisper ローカル実行**: API ではなくローカル Whisper モデルで文字起こし（コスト削減・長時間対応）
+- **Web UI**: FastAPI or Streamlit でローカルサーバーを立て、iPhone からアクセス
+
 ## 姉妹プロジェクト
 
 - `~/trail-podcast/` — トレイルランニング特化の AI Podcast
