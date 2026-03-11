@@ -160,7 +160,7 @@ def _download_direct_audio(url: str) -> bytes:
     for chunk in resp.iter_content(chunk_size=1024 * 1024):
         chunks.append(chunk)
         received += len(chunk)
-        if received >= WHISPER_MAX_BYTES * 2:
+        if received >= 500 * 1024 * 1024:  # 500MB 安全上限
             print(f"  ダウンロード上限到達 ({received // 1024 // 1024} MB)")
             break
 
@@ -222,13 +222,11 @@ def _trim_mp3_bytes(mp3_bytes: bytes, max_seconds: int) -> bytes:
 
 
 def _ensure_size(mp3_bytes: bytes) -> bytes:
-    """Whisper API の上限を超える場合はトリミングする。"""
-    if len(mp3_bytes) <= WHISPER_MAX_BYTES:
-        return mp3_bytes
+    """音声サイズを確認する。チャンク分割で Whisper 上限に対応するためトリミングは行わない。"""
     total_mb = len(mp3_bytes) / 1024 / 1024
-    max_sec = int(WHISPER_MAX_BYTES * 8 / 64000)
-    print(f"  音声が {total_mb:.1f} MB。Whisper上限のため {max_sec // 60} 分にトリミング...")
-    return _trim_mp3_bytes(mp3_bytes, max_sec)
+    if total_mb > WHISPER_MAX_BYTES / 1024 / 1024:
+        print(f"  音声サイズ: {total_mb:.1f} MB（チャンク分割で処理）")
+    return mp3_bytes
 
 
 # -------------------------------------------------------- メイン --

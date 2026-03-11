@@ -1,4 +1,5 @@
 # translate.py - Claude で翻訳
+# 長い原稿は自動的にバッチ分割して翻訳
 
 import os
 import json
@@ -8,6 +9,10 @@ import anthropic
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
+
+# バッチ分割の設定
+BATCH_MAX_LINES = 80      # 1バッチあたりの最大行数
+CONTEXT_OVERLAP = 3        # バッチ間で共有するコンテキスト行数
 
 SYSTEM_PROMPT = """\
 あなたはプロの翻訳者です。外国語のポッドキャスト/動画の書き起こしテキストを日本語に翻訳してください。
@@ -46,16 +51,79 @@ JSONのみ出力し、他の説明は不要です。
 """
 
 
+def _build_preamble(context: str = "",
+                    speaker_profiles: list[dict] | None = None,
+                    speakers: dict | None = None) -> str:
+    """翻訳リクエストの前文（コンテキスト + 話者情報）を構築する。"""
+    parts = []
+
+    if context:
+        parts.append(f"コンテキスト: {context}")
+
+    if speaker_profiles:
+        profiles_text = "話者プロファイル:\n"
+        for sp in speaker_profiles:
+            profiles_text += (f"- {sp.get('id', '?')}: "
+                              f"{sp.get('name', 'Unknown')} "
+                              f"({sp.get('gender', '?')}, {sp.get('role', '?')})"
+                              f" — {sp.get('description', '')}\n")
+        parts.append(profiles_text)
+    elif speakers:
+        profiles_text = "話者プロファイル（音声分析による推定）:\n"
+        for sp_id, features in speakers.items():
+            gender = features.get("gender_hint", "unknown")
+            profiles_text += f"- {sp_id}: ({gender})\n"
+        parts.append(profiles_text)
+
+    return "\n\n".join(parts)
+
+
+def _translate_batch(client: anthropic.Anthropic, preamble: str,
+                     transcript_lines: list[str],
+                     prev_context: list[dict] | None = None) -> list[dict]:
+    """1バッチ分の翻訳を実行する。"""
+    user_message = ""
+
+    if preamble:
+        user_message += preamble + "\n\n"
+
+    if prev_context:
+        user_message += "（前のパートの末尾。口調の参考用、翻訳不要）:\n"
+        for seg in prev_context:
+            user_message += f"[{seg['speaker']}] {seg['text']}\n"
+        user_message += "\n"
+
+    transcript = "\n".join(transcript_lines)
+    user_message += f"以下のテキストを日本語に翻訳してください:\n\n{transcript}"
+
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=16384,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_message}],
+    )
+
+    text = response.content[0].text.strip()
+
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(lines[1:-1])
+
+    return json.loads(text)
+
+
 def translate(transcript: str, speakers: dict | None = None,
               context: str = "",
               speaker_profiles: list[dict] | None = None) -> list[dict]:
     """書き起こしテキストを日本語に翻訳する。
 
+    長い原稿は自動的にバッチ分割して翻訳する。
+
     Args:
         transcript: 原文テキスト（話者ラベル付き）
         speakers: 話者の声質情報
         context: メタデータ分析から得たコンテキスト
-        speaker_profiles: 話者プロファイル [{"id", "name", "role", "gender"}, ...]
+        speaker_profiles: 話者プロファイル
 
     Returns:
         [{"speaker": "Speaker_1", "text": "..."}, ...]
@@ -65,46 +133,36 @@ def translate(transcript: str, speakers: dict | None = None,
         raise ValueError("ANTHROPIC_API_KEY が .env に設定されていません")
 
     client = anthropic.Anthropic(api_key=api_key)
+    preamble = _build_preamble(context, speaker_profiles, speakers)
 
-    user_message = ""
+    lines = [l for l in transcript.split("\n") if l.strip()]
+    total_chars = len(transcript)
 
-    if context:
-        user_message += f"コンテキスト: {context}\n\n"
+    # 短い原稿はそのまま翻訳
+    if len(lines) <= BATCH_MAX_LINES:
+        print(f"\nClaude 翻訳中... ({total_chars} 文字)")
+        result = _translate_batch(client, preamble, lines)
+        print(f"  翻訳完了: {len(result)} セグメント")
+        return result
 
-    if speaker_profiles:
-        profiles_text = "話者プロファイル:\n"
-        for sp in speaker_profiles:
-            profiles_text += (f"- {sp.get('id', '?')}: "
-                              f"{sp.get('name', 'Unknown')} "
-                              f"({sp.get('gender', '?')}, {sp.get('role', '?')})"
-                              f" — {sp.get('description', '')}\n")
-        user_message += profiles_text + "\n"
-    elif speakers:
-        # メタデータがなくても voice_features の gender_hint から性別を伝える
-        profiles_text = "話者プロファイル（音声分析による推定）:\n"
-        for sp_id, features in speakers.items():
-            gender = features.get("gender_hint", "unknown")
-            profiles_text += f"- {sp_id}: ({gender})\n"
-        user_message += profiles_text + "\n"
+    # 長い原稿はバッチ分割
+    batches = []
+    for i in range(0, len(lines), BATCH_MAX_LINES):
+        batches.append(lines[i:i + BATCH_MAX_LINES])
 
-    user_message += f"以下のテキストを日本語に翻訳してください:\n\n{transcript}"
+    print(f"\nClaude 翻訳中... ({total_chars} 文字, {len(batches)} バッチ)")
 
-    print(f"\nClaude 翻訳中... ({len(transcript)} 文字)")
+    all_results = []
+    prev_context = None
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=8192,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}],
-    )
+    for i, batch in enumerate(batches):
+        print(f"  バッチ {i + 1}/{len(batches)} ({len(batch)} 行)...")
+        result = _translate_batch(client, preamble, batch, prev_context)
+        all_results.extend(result)
+        print(f"    → {len(result)} セグメント")
 
-    text = response.content[0].text.strip()
+        # 次のバッチ用のコンテキスト
+        prev_context = result[-CONTEXT_OVERLAP:] if result else None
 
-    # JSON 抽出（コードブロックで囲まれている場合にも対応）
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1])
-
-    result = json.loads(text)
-    print(f"  翻訳完了: {len(result)} セグメント")
-    return result
+    print(f"  翻訳完了: 合計 {len(all_results)} セグメント")
+    return all_results
