@@ -1,0 +1,9 @@
+name = "podcast-translator-api"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+GITHUB_REPO = "masaomi/podcast-translator"
+
+# GitHub PAT は Cloudflare ダッシュボードで Secret として設定:
+# wrangler secret put GITHUB_PAT

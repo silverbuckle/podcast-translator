@@ -1,0 +1,12 @@
+anthropic
+openai
+python-dotenv
+google-genai
+pydub
+audioop-lts; python_version >= "3.13"
+requests
+yt-dlp
+feedparser
+pyannote.audio
+torch
+torchaudio

@@ -1,0 +1,16 @@
+{
+  "_comment": "TTS 読み辞書。固有名詞を正しい読みに置換する。",
+  "Bash": "バッシュ",
+  "CNN": "シーエヌエヌ",
+  "Caitlin": "ケイトリン",
+  "Caitlin Collins": "ケイトリン コリンズ",
+  "Collins": "コリンズ",
+  "Dana": "ダナ",
+  "Dana Bash": "ダナ バッシュ",
+  "Ellison": "エリソン",
+  "Fareed": "ファリード",
+  "Jennings": "ジェニングス",
+  "Scott": "スコット",
+  "Scott Jennings": "スコット ジェニングス",
+  "Survivor": "サバイバー"
+}

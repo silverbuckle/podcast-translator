@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Podcast Translator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      width: 100%;
+      max-width: 480px;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      color: #888;
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .input-group {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    input[type="url"] {
+      flex: 1;
+      padding: 14px 16px;
+      border: 1px solid #333;
+      border-radius: 12px;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      font-size: 16px; /* iOS zoom 防止 */
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="url"]:focus {
+      border-color: #666;
+    }
+    input[type="url"]::placeholder {
+      color: #555;
+    }
+    button {
+      padding: 14px 24px;
+      border: none;
+      border-radius: 12px;
+      background: #2563eb;
+      color: white;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled {
+      background: #333;
+      color: #666;
+      cursor: not-allowed;
+    }
+    #status {
+      padding: 16px;
+      border-radius: 12px;
+      background: #1a1a1a;
+      border: 1px solid #222;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      display: none;
+    }
+    #status.visible { display: block; }
+    .status-icon { margin-right: 8px; }
+    .status-line {
+      padding: 4px 0;
+      color: #aaa;
+    }
+    .status-line.active { color: #e0e0e0; }
+    .status-line.done { color: #22c55e; }
+    .status-line.error { color: #ef4444; }
+    .download-link {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 10px 20px;
+      background: #22c55e;
+      color: white;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: 600;
+    }
+    .history {
+      margin-top: 32px;
+      width: 100%;
+    }
+    .history h2 {
+      font-size: 0.85rem;
+      color: #666;
+      margin-bottom: 12px;
+    }
+    .history-item {
+      padding: 12px 16px;
+      background: #1a1a1a;
+      border: 1px solid #222;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      font-size: 0.85rem;
+    }
+    .history-item .title { color: #e0e0e0; }
+    .history-item .meta { color: #666; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Podcast Translator</h1>
+    <p class="subtitle">URLを貼るだけで日本語に翻訳</p>
+
+    <div class="input-group">
+      <input type="url" id="url-input" placeholder="YouTube / Podcast URL" autocomplete="off">
+      <button id="submit-btn" onclick="submitUrl()">翻訳</button>
+    </div>
+
+    <div id="status"></div>
+
+    <div class="history" id="history" style="display:none;">
+      <h2>履歴</h2>
+      <div id="history-list"></div>
+    </div>
+  </div>
+
+  <script>
+    // --- 設定 ---
+    // Cloudflare Worker の URL（デプロイ後に設定）
+    const API_BASE = localStorage.getItem('api_base') || '';
+    const GITHUB_REPO = 'masaomi/podcast-translator'; // 要変更
+
+    // --- メイン ---
+    async function submitUrl() {
+      const url = document.getElementById('url-input').value.trim();
+      if (!url) return;
+
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = '送信中...';
+
+      const status = document.getElementById('status');
+      status.className = 'visible';
+      status.innerHTML = '<div class="status-line active">⏳ ワークフロー起動中...</div>';
+
+      try {
+        const resp = await fetch(`${API_BASE}/api/trigger`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+
+        if (!resp.ok) {
+          throw new Error(`API エラー: ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        const runId = data.run_id;
+
+        status.innerHTML = `
+          <div class="status-line done">✅ ワークフロー起動</div>
+          <div class="status-line active">⏳ 処理中... (run: ${runId || '?'})</div>
+          <div class="status-line">📥 ダウンロード</div>
+          <div class="status-line">📝 文字起こし</div>
+          <div class="status-line">🌐 翻訳</div>
+          <div class="status-line">🔊 音声生成</div>
+        `;
+
+        // ポーリングで完了待ち
+        if (runId) {
+          pollStatus(runId);
+        }
+
+      } catch (e) {
+        status.innerHTML = `<div class="status-line error">❌ ${e.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '翻訳';
+      }
+    }
+
+    async function pollStatus(runId) {
+      const status = document.getElementById('status');
+      const interval = setInterval(async () => {
+        try {
+          const resp = await fetch(`${API_BASE}/api/status/${runId}`);
+          const data = await resp.json();
+
+          if (data.status === 'completed') {
+            clearInterval(interval);
+            status.innerHTML = `
+              <div class="status-line done">✅ 完了!</div>
+              <a class="download-link" href="${data.artifact_url}" target="_blank">
+                🎧 MP3 をダウンロード
+              </a>
+            `;
+            addToHistory(document.getElementById('url-input').value, data);
+          } else if (data.status === 'failure' || data.status === 'cancelled') {
+            clearInterval(interval);
+            status.innerHTML = `<div class="status-line error">❌ 処理失敗: ${data.status}</div>`;
+          }
+          // in_progress → 継続
+        } catch (e) {
+          // ネットワークエラーは無視して継続
+        }
+      }, 15000); // 15秒ごと
+    }
+
+    function addToHistory(url, data) {
+      const history = JSON.parse(localStorage.getItem('history') || '[]');
+      history.unshift({
+        url,
+        title: data.title || url,
+        date: new Date().toISOString(),
+        artifact_url: data.artifact_url,
+      });
+      localStorage.setItem('history', JSON.stringify(history.slice(0, 20)));
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const history = JSON.parse(localStorage.getItem('history') || '[]');
+      if (history.length === 0) return;
+
+      document.getElementById('history').style.display = 'block';
+      const list = document.getElementById('history-list');
+      list.innerHTML = history.map(item => `
+        <div class="history-item">
+          <div class="title">${item.title}</div>
+          <div class="meta">${new Date(item.date).toLocaleDateString('ja-JP')}</div>
+        </div>
+      `).join('');
+    }
+
+    // iOS: 共有メニューからのURL受取（query parameter）
+    const params = new URLSearchParams(location.search);
+    if (params.get('url')) {
+      document.getElementById('url-input').value = params.get('url');
+    }
+
+    // Enter キーで送信
+    document.getElementById('url-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitUrl();
+    });
+
+    // 履歴表示
+    renderHistory();
+  </script>
+</body>
+</html>
