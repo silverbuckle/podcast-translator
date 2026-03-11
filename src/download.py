@@ -41,7 +41,10 @@ def _download_youtube(url: str, work_dir: Path) -> bytes:
         url,
     ]
     print(f"  yt-dlp 実行中...")
-    subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    if result.returncode != 0:
+        print(f"  yt-dlp stderr: {result.stderr[:500]}")
+        raise RuntimeError(f"yt-dlp failed: {result.stderr[:200]}")
     return out_path.read_bytes()
 
 

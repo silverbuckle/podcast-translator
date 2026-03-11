@@ -24,6 +24,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+          pip install -U yt-dlp
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt
@@ -33,6 +34,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HF_AUTH_TOKEN: ${{ secrets.HF_AUTH_TOKEN }}
         run: python src/main.py "${{ inputs.url }}"
 
       - name: Upload MP3
