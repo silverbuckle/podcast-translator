@@ -30,12 +30,8 @@ def _detect_url_type(url: str) -> str:
 # -------------------------------------------------------- YouTube --
 
 def _yt_dlp_extra_args() -> list[str]:
-    """yt-dlp の共通オプション（cookies, remote-components）を返す。"""
-    args = ["--remote-components", "ejs:github"]
-    cookies_path = os.environ.get("YT_COOKIES_PATH")
-    if cookies_path and Path(cookies_path).exists():
-        args += ["--cookies", cookies_path]
-    return args
+    """yt-dlp の共通オプション（cookies, JS ランタイム）を返す。"""
+    return ["--cookies-from-browser", "chrome"]
 
 
 def _download_youtube(url: str, work_dir: Path) -> bytes:

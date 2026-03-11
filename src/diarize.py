@@ -15,10 +15,10 @@ from pyannote.audio import Pipeline
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-# チャンク分割の設定
-CHUNK_DURATION_MS = 20 * 60 * 1000   # 20分
+# チャンク分割の設定（Whisper API の 25MB 制限に対応）
+CHUNK_DURATION_MS = 40 * 60 * 1000   # 40分（MPS で高速処理可能）
 OVERLAP_MS = 30 * 1000                # 30秒オーバーラップ
-CHUNK_THRESHOLD_MS = 22 * 60 * 1000   # 22分以上でチャンク分割
+CHUNK_THRESHOLD_MS = 45 * 60 * 1000   # 45分以上でチャンク分割
 
 
 def _load_pipeline():
