@@ -32,12 +32,16 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Setup YouTube cookies
+        run: echo "${{ secrets.YT_COOKIES }}" > /tmp/cookies.txt
+
       - name: Run pipeline
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_AUTH_TOKEN: ${{ secrets.HF_AUTH_TOKEN }}
+          YT_COOKIES_PATH: /tmp/cookies.txt
         run: python src/main.py "${{ inputs.url }}"
 
       - name: Upload MP3

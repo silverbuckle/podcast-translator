@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -40,6 +41,10 @@ def _download_youtube(url: str, work_dir: Path) -> bytes:
         "--no-playlist",
         url,
     ]
+    cookies_path = os.environ.get("YT_COOKIES_PATH")
+    if cookies_path and Path(cookies_path).exists():
+        cmd.insert(1, "--cookies")
+        cmd.insert(2, cookies_path)
     print(f"  yt-dlp 実行中...")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
@@ -57,6 +62,10 @@ def _get_youtube_metadata(url: str) -> dict:
         "--skip-download",
         url,
     ]
+    cookies_path = os.environ.get("YT_COOKIES_PATH")
+    if cookies_path and Path(cookies_path).exists():
+        cmd.insert(1, "--cookies")
+        cmd.insert(2, cookies_path)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
@@ -89,6 +98,10 @@ def _get_youtube_captions(url: str) -> str:
                 "--no-playlist",
                 url,
             ]
+            cookies_path = os.environ.get("YT_COOKIES_PATH")
+            if cookies_path and Path(cookies_path).exists():
+                cmd.insert(1, "--cookies")
+                cmd.insert(2, cookies_path)
             subprocess.run(cmd, capture_output=True, timeout=30)
 
             # 手動字幕を優先、なければ自動字幕
