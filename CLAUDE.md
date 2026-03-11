@@ -1,78 +1,67 @@
 # Podcast Translator
 
 ## 概要
-任意の外国語ポッドキャスト/YouTube動画を日本語に翻訳・読み上げるツール。
-話者の声質を解析し、Gemini TTS で近い声質で日本語音声を生成する。
+外国語 Podcast / YouTube 動画の URL → 日本語翻訳 MP3 を生成するツール。
+話者を自動識別し、性別に応じた声質・口調で日本語音声を出力する。
+
+## アーキテクチャ
+```
+iPhone/PC ブラウザ → Web UI (GitHub Pages) → GitHub Actions → MP3 artifact
+```
+- Web UI: `docs/index.html`（GitHub PAT を localStorage に保存、GitHub API を直接呼び出し）
+- GitHub Actions: `workflow_dispatch` で起動、`translate.yml` でパイプライン実行
+- 出力: artifact として MP3 + スクリプト JSON（30日保持）
+
+## パイプライン (`src/main.py`)
+```
+URL → download → analyze_metadata → diarize_and_transcribe → translate → tts → MP3
+```
+
+| STEP | ファイル | 使用 API |
+|------|----------|----------|
+| 1. 音声DL + メタデータ | `download.py` | yt-dlp, feedparser |
+| 2. メタデータ分析 | `analyze.py` | Claude Haiku 4.5 |
+| 3. 話者分離 + 文字起こし | `diarize.py` | pyannote-audio, Whisper |
+| 4. 翻訳 | `translate.py` | Claude Sonnet 4 |
+| 5. TTS | `tts.py` | Gemini Flash TTS |
+
+## ファイル構成
+```
+docs/index.html          # Web UI (GitHub Pages)
+docs/MANUAL.md           # 運用マニュアル
+docs/DEVELOPMENT.md      # 制作ノート
+src/main.py              # パイプライン統合
+src/download.py          # 音声DL + メタデータ収集
+src/analyze.py           # メタデータ分析 (Claude Haiku)
+src/diarize.py           # 話者分離 + 文字起こし (pyannote + Whisper)
+src/translate.py         # 翻訳 (Claude Sonnet)
+src/tts.py               # 音声生成 (Gemini Flash TTS)
+.github/workflows/translate.yml  # GitHub Actions
+input/custom_readings.json       # TTS 読み辞書
+```
+
+## 技術的な要点
+
+### 話者識別
+- pyannote-audio v4 で話者分離（`token=` で認証、`DiarizeOutput.speaker_diarization` で Annotation 取得）
+- 自己相関法で F0 推定 → 性別判定 → メタデータの性別とマッチング（`_match_speakers_by_gender()`）
+- F0 差 < 30Hz の話者を統合して過剰分割を修正
+
+### 翻訳
+- 話者プロファイル（性別・役割）に応じた日本語の口調（男性言葉/女性言葉）
+- 1セグメント 200文字以内で分割
+
+### TTS
+- 30種プリセットボイスから F0 帯域 + エネルギーで自動選択
+- マルチスピーカー最大2人/チャンク → 3人目でチャンク分割
+- 読み辞書: 固有名詞のカタカナ読みを Gemini Flash で自動生成
+
+## API キー
+`.env`（ローカル）/ GitHub Secrets（Actions）:
+- `ANTHROPIC_API_KEY` — Claude API
+- `OPENAI_API_KEY` — Whisper API
+- `GEMINI_API_KEY` — Gemini TTS
+- `HF_AUTH_TOKEN` — pyannote-audio (HuggingFace)
 
 ## 姉妹プロジェクト
-- `~/trail-podcast/` — トレイルランニング特化のAI Podcast（本プロジェクトの原型）
-- tts.py、読み辞書、Whisper文字起こし等のコードを参考にできる
-
-## パイプライン
-```
-URL入力 → 音声取得 → Whisper文字起こし → 話者分離・声質分析 → Claude翻訳 → Gemini TTS → MP3出力
-```
-
-## 設計方針
-
-### 入力
-- Podcast エピソードの個別URL（音声直リンクまたはエピソードページ）
-- YouTube 動画の個別URL
-- 1本ずつ処理（バッチではない）
-
-### 文字起こし
-- OpenAI Whisper API（言語自動検出、`language` パラメータは指定しない）
-- 長い音声は分割して処理（Whisper上限対策: trail-podcast の `_trim_mp3_bytes` 参照）
-
-### 話者分離（Speaker Diarization）
-- `pyannote-audio` で話者を分離
-- 各話者の声質特徴を抽出（ピッチ帯域、話速、エネルギー等）
-- メタデータとして保持: `{"speaker_1": {"pitch": "low", "pace": "slow", ...}, ...}`
-- 単一話者の場合はスキップ
-
-### 声質 → Gemini TTS ボイスマッピング
-- Gemini TTS のプリセットボイス一覧から最も近いものを自動選択
-- SPEECH_DIRECTION で声質特徴（ピッチ・テンポ・トーン）を指示
-- trail-podcast の VOICE_CONFIG / SPEECH_DIRECTION パターンを流用
-
-### 翻訳（Claude）
-- 原文に忠実な翻訳（意訳・再構成はしない）
-- 冗長な部分（繰り返し、フィラー、脱線）は自然にカットしてよい
-- 話者ラベルを維持: `[Speaker 1] こんにちは...`
-- 出力は JSON: `[{"speaker": "Speaker_1", "text": "..."}, ...]`
-
-### TTS（Gemini Flash TTS）
-- trail-podcast の tts.py をベースに汎用化
-- チャンクサイズ: 3000文字（trail-podcast で検証済み）
-- スピーカー交代時に [pause: 0.8s] 挿入
-- 読み辞書の自動更新（Gemini Flash で固有名詞のカタカナ読み生成）
-
-### 出力
-- MP3 ファイル（output/ ディレクトリ）
-- RSS配信は不要（ローカル利用）
-
-## 将来的な拡張
-- Web UI（Streamlit or FastAPI）で URL を入力 → MP3 ダウンロード
-- 処理状況のプログレス表示
-- 翻訳結果のプレビュー・編集機能
-
-## 技術スタック
-- Python 3.12+
-- anthropic（Claude API: 翻訳）
-- openai（Whisper API: 文字起こし）
-- google-genai（Gemini Flash TTS: 音声生成）
-- pyannote-audio（話者分離）
-- pydub（音声加工）
-- yt-dlp（YouTube音声取得）
-- feedparser（Podcast RSS解析）
-
-## API キー（.env）
-- ANTHROPIC_API_KEY
-- OPENAI_API_KEY
-- GEMINI_API_KEY
-- HF_AUTH_TOKEN（pyannote-audio 用、Hugging Face トークン）
-
-## trail-podcast から流用するコード
-- `tts.py`: TTS全般（チャンク分割、Gemini API呼び出し、PCM→AudioSegment、読み辞書）
-- `collect.py`: `_whisper_transcribe()`, `_trim_mp3_bytes()`, YouTube音声取得
-- `translate.py`: Claude API呼び出しパターン、スクリプトパース
+- `~/trail-podcast/` — トレイルランニング特化 AI Podcast（TTS・読み辞書の原型）
