@@ -38,23 +38,19 @@
       gap: 8px;
       margin-bottom: 16px;
     }
-    input[type="url"] {
+    input[type="url"], input[type="password"] {
       flex: 1;
       padding: 14px 16px;
       border: 1px solid #333;
       border-radius: 12px;
       background: #1a1a1a;
       color: #e0e0e0;
-      font-size: 16px; /* iOS zoom 防止 */
+      font-size: 16px;
       outline: none;
       transition: border-color 0.2s;
     }
-    input[type="url"]:focus {
-      border-color: #666;
-    }
-    input[type="url"]::placeholder {
-      color: #555;
-    }
+    input:focus { border-color: #666; }
+    input::placeholder { color: #555; }
     button {
       padding: 14px 24px;
       border: none;
@@ -73,6 +69,14 @@
       color: #666;
       cursor: not-allowed;
     }
+    .btn-sm {
+      padding: 10px 16px;
+      font-size: 14px;
+      background: #333;
+    }
+    .btn-sm:hover { background: #444; }
+    .btn-danger { background: #991b1b; }
+    .btn-danger:hover { background: #b91c1c; }
     #status {
       padding: 16px;
       border-radius: 12px;
@@ -83,11 +87,7 @@
       display: none;
     }
     #status.visible { display: block; }
-    .status-icon { margin-right: 8px; }
-    .status-line {
-      padding: 4px 0;
-      color: #aaa;
-    }
+    .status-line { padding: 4px 0; color: #aaa; }
     .status-line.active { color: #e0e0e0; }
     .status-line.done { color: #22c55e; }
     .status-line.error { color: #ef4444; }
@@ -100,6 +100,37 @@
       text-decoration: none;
       border-radius: 8px;
       font-weight: 600;
+    }
+    .setup {
+      margin-bottom: 24px;
+      padding: 16px;
+      background: #1a1a1a;
+      border: 1px solid #222;
+      border-radius: 12px;
+    }
+    .setup label {
+      display: block;
+      font-size: 0.8rem;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    .setup .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .connected {
+      font-size: 0.8rem;
+      color: #22c55e;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+    .connected button {
+      margin-left: 8px;
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      background: #333;
+      border-radius: 6px;
     }
     .history {
       margin-top: 32px;
@@ -120,6 +151,7 @@
     }
     .history-item .title { color: #e0e0e0; }
     .history-item .meta { color: #666; margin-top: 4px; }
+    .history-item .meta a { color: #2563eb; text-decoration: none; }
   </style>
 </head>
 <body>
@@ -127,6 +159,22 @@
     <h1>Podcast Translator</h1>
     <p class="subtitle">URLを貼るだけで日本語に翻訳</p>
 
+    <!-- PAT 設定（未設定時のみ表示） -->
+    <div class="setup" id="setup">
+      <label>GitHub Personal Access Token</label>
+      <div class="row">
+        <input type="password" id="pat-input" placeholder="github_pat_...">
+        <button class="btn-sm" onclick="savePat()">保存</button>
+      </div>
+    </div>
+
+    <!-- 接続済み表示 -->
+    <div class="connected" id="connected" style="display:none;">
+      GitHub 接続済み
+      <button onclick="clearPat()">解除</button>
+    </div>
+
+    <!-- URL 入力 -->
     <div class="input-group">
       <input type="url" id="url-input" placeholder="YouTube / Podcast URL" autocomplete="off">
       <button id="submit-btn" onclick="submitUrl()">翻訳</button>
@@ -141,15 +189,55 @@
   </div>
 
   <script>
-    // --- 設定 ---
-    // Cloudflare Worker の URL（デプロイ後に設定）
-    const API_BASE = localStorage.getItem('api_base') || '';
-    const GITHUB_REPO = 'masaomi/podcast-translator'; // 要変更
+    const REPO = 'silverbuckle/podcast-translator';
+    const WORKFLOW = 'translate.yml';
+    const GH_API = 'https://api.github.com';
+
+    // --- PAT 管理 ---
+    function getPat() { return localStorage.getItem('gh_pat') || ''; }
+
+    function savePat() {
+      const pat = document.getElementById('pat-input').value.trim();
+      if (!pat) return;
+      localStorage.setItem('gh_pat', pat);
+      updateUI();
+    }
+
+    function clearPat() {
+      localStorage.removeItem('gh_pat');
+      updateUI();
+    }
+
+    function updateUI() {
+      const hasPat = !!getPat();
+      document.getElementById('setup').style.display = hasPat ? 'none' : 'block';
+      document.getElementById('connected').style.display = hasPat ? 'block' : 'none';
+      document.getElementById('submit-btn').disabled = !hasPat;
+    }
+
+    // --- GitHub API ---
+    async function ghFetch(path, options = {}) {
+      const resp = await fetch(`${GH_API}${path}`, {
+        ...options,
+        headers: {
+          'Authorization': `Bearer ${getPat()}`,
+          'Accept': 'application/vnd.github.v3+json',
+          ...options.headers,
+        },
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`GitHub API ${resp.status}: ${text.slice(0, 200)}`);
+      }
+      // 204 No Content (workflow_dispatch の成功レスポンス)
+      if (resp.status === 204) return null;
+      return resp.json();
+    }
 
     // --- メイン ---
     async function submitUrl() {
       const url = document.getElementById('url-input').value.trim();
-      if (!url) return;
+      if (!url || !getPat()) return;
 
       const btn = document.getElementById('submit-btn');
       btn.disabled = true;
@@ -157,78 +245,93 @@
 
       const status = document.getElementById('status');
       status.className = 'visible';
-      status.innerHTML = '<div class="status-line active">⏳ ワークフロー起動中...</div>';
+      status.innerHTML = '<div class="status-line active">... ワークフロー起動中</div>';
 
       try {
-        const resp = await fetch(`${API_BASE}/api/trigger`, {
+        // 1. workflow_dispatch をトリガー
+        await ghFetch(`/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url }),
+          body: JSON.stringify({ ref: 'main', inputs: { url } }),
         });
 
-        if (!resp.ok) {
-          throw new Error(`API エラー: ${resp.status}`);
-        }
-
-        const data = await resp.json();
-        const runId = data.run_id;
+        // 2. 少し待ってから run_id を取得
+        await sleep(3000);
+        const runs = await ghFetch(
+          `/repos/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=1`
+        );
+        const runId = runs.workflow_runs?.[0]?.id;
+        const runUrl = runs.workflow_runs?.[0]?.html_url || '#';
 
         status.innerHTML = `
-          <div class="status-line done">✅ ワークフロー起動</div>
-          <div class="status-line active">⏳ 処理中... (run: ${runId || '?'})</div>
-          <div class="status-line">📥 ダウンロード</div>
-          <div class="status-line">📝 文字起こし</div>
-          <div class="status-line">🌐 翻訳</div>
-          <div class="status-line">🔊 音声生成</div>
+          <div class="status-line done">OK ワークフロー起動</div>
+          <div class="status-line active">... 処理中 (<a href="${runUrl}" target="_blank" style="color:#2563eb">ログ</a>)</div>
         `;
 
-        // ポーリングで完了待ち
-        if (runId) {
-          pollStatus(runId);
-        }
+        // 3. ポーリング
+        if (runId) pollStatus(runId, url);
 
       } catch (e) {
-        status.innerHTML = `<div class="status-line error">❌ ${e.message}</div>`;
+        status.innerHTML = `<div class="status-line error">NG ${e.message}</div>`;
       } finally {
         btn.disabled = false;
         btn.textContent = '翻訳';
       }
     }
 
-    async function pollStatus(runId) {
+    async function pollStatus(runId, inputUrl) {
       const status = document.getElementById('status');
-      const interval = setInterval(async () => {
+
+      while (true) {
+        await sleep(15000);
         try {
-          const resp = await fetch(`${API_BASE}/api/status/${runId}`);
-          const data = await resp.json();
+          const data = await ghFetch(`/repos/${REPO}/actions/runs/${runId}`);
+          const runUrl = data.html_url || '#';
 
           if (data.status === 'completed') {
-            clearInterval(interval);
-            status.innerHTML = `
-              <div class="status-line done">✅ 完了!</div>
-              <a class="download-link" href="${data.artifact_url}" target="_blank">
-                🎧 MP3 をダウンロード
-              </a>
-            `;
-            addToHistory(document.getElementById('url-input').value, data);
-          } else if (data.status === 'failure' || data.status === 'cancelled') {
-            clearInterval(interval);
-            status.innerHTML = `<div class="status-line error">❌ 処理失敗: ${data.status}</div>`;
+            if (data.conclusion === 'success') {
+              // アーティファクト取得
+              const arts = await ghFetch(
+                `/repos/${REPO}/actions/runs/${runId}/artifacts`
+              );
+              const audio = arts.artifacts?.find(a => a.name === 'translated-audio');
+              const dlUrl = audio
+                ? `${GH_API}/repos/${REPO}/actions/artifacts/${audio.id}/zip`
+                : null;
+
+              status.innerHTML = `
+                <div class="status-line done">OK 完了!</div>
+                ${dlUrl ? `<a class="download-link" href="${dlUrl}" target="_blank">MP3 をダウンロード</a>` : ''}
+                <div style="margin-top:8px;font-size:0.8rem;color:#888;">
+                  <a href="${runUrl}" target="_blank" style="color:#2563eb;">ログを確認</a>
+                </div>
+              `;
+              addToHistory(inputUrl, { runUrl, artifactUrl: dlUrl });
+            } else {
+              status.innerHTML = `
+                <div class="status-line error">NG 処理失敗: ${data.conclusion}</div>
+                <div style="margin-top:8px;font-size:0.8rem;">
+                  <a href="${runUrl}" target="_blank" style="color:#2563eb;">ログを確認</a>
+                </div>
+              `;
+            }
+            return;
           }
-          // in_progress → 継続
+          // まだ実行中
         } catch (e) {
           // ネットワークエラーは無視して継続
         }
-      }, 15000); // 15秒ごと
+      }
     }
 
+    // --- 履歴 ---
     function addToHistory(url, data) {
       const history = JSON.parse(localStorage.getItem('history') || '[]');
       history.unshift({
         url,
-        title: data.title || url,
         date: new Date().toISOString(),
-        artifact_url: data.artifact_url,
+        runUrl: data.runUrl,
+        artifactUrl: data.artifactUrl,
       });
       localStorage.setItem('history', JSON.stringify(history.slice(0, 20)));
       renderHistory();
@@ -239,16 +342,21 @@
       if (history.length === 0) return;
 
       document.getElementById('history').style.display = 'block';
-      const list = document.getElementById('history-list');
-      list.innerHTML = history.map(item => `
+      document.getElementById('history-list').innerHTML = history.map(item => `
         <div class="history-item">
-          <div class="title">${item.title}</div>
-          <div class="meta">${new Date(item.date).toLocaleDateString('ja-JP')}</div>
+          <div class="title">${item.url.length > 50 ? item.url.slice(0, 50) + '...' : item.url}</div>
+          <div class="meta">
+            ${new Date(item.date).toLocaleDateString('ja-JP')}
+            ${item.runUrl ? `<a href="${item.runUrl}" target="_blank">ログ</a>` : ''}
+          </div>
         </div>
       `).join('');
     }
 
-    // iOS: 共有メニューからのURL受取（query parameter）
+    // --- ユーティリティ ---
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // iOS 共有メニューからの URL 受取
     const params = new URLSearchParams(location.search);
     if (params.get('url')) {
       document.getElementById('url-input').value = params.get('url');
@@ -259,7 +367,8 @@
       if (e.key === 'Enter') submitUrl();
     });
 
-    // 履歴表示
+    // 初期化
+    updateUI();
     renderHistory();
   </script>
 </body>
