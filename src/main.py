@@ -20,12 +20,16 @@ def _make_output_name(url: str) -> str:
 
 
 def _match_speakers_by_gender(voice_features: dict[str, dict],
-                              speaker_info: list[dict]) -> dict[str, dict]:
+                              speaker_info: list[dict],
+                              segments: list[dict] | None = None) -> dict[str, dict]:
     """F0 の性別推定とメタデータの性別情報を照合し、正しい対応を返す。
 
     pyannote の Speaker_N とメタデータの Speaker_N は番号が一致するとは限らない。
     F0 から推定した gender_hint とメタデータの gender をマッチングして
     正しい対応関係を構築する。
+
+    F0 で性別が区別できない場合（全員同じ gender_hint）は、
+    発話量の多い順にメタデータの話者順（通常 host が先）にマッチングする。
 
     Returns:
         {pyannote_speaker_id: metadata_speaker_dict, ...}
@@ -33,10 +37,34 @@ def _match_speakers_by_gender(voice_features: dict[str, dict],
     if not voice_features or not speaker_info:
         return {}
 
+    # F0 推定の性別が全員同じかチェック
+    genders = set(f.get("gender_hint", "unknown") for f in voice_features.values())
+    all_same_gender = len(genders) == 1
+
+    if all_same_gender and segments:
+        # F0 で区別できない → 発話量でマッチング
+        # 発話量が多い方を host（メタデータの最初の話者）に割り当てる
+        print("    F0 で性別区別不可 → 発話量ベースでマッチング")
+        speaker_chars: dict[str, int] = {}
+        for seg in segments:
+            sp = seg["speaker"]
+            speaker_chars[sp] = speaker_chars.get(sp, 0) + len(seg.get("text", ""))
+
+        # 発話量の多い順にソート
+        sorted_by_chars = sorted(voice_features.keys(),
+                                  key=lambda s: speaker_chars.get(s, 0),
+                                  reverse=True)
+
+        mapping: dict[str, dict] = {}
+        for i, speaker_id in enumerate(sorted_by_chars):
+            if i < len(speaker_info):
+                mapping[speaker_id] = speaker_info[i]
+
+        return mapping
+
     # メタデータの話者を性別でグループ化
     meta_male = [sp for sp in speaker_info if sp.get("gender") == "male"]
     meta_female = [sp for sp in speaker_info if sp.get("gender") == "female"]
-    meta_unknown = [sp for sp in speaker_info if sp.get("gender") not in ("male", "female")]
 
     # pyannote の話者を F0 でソート（低い=男性の可能性が高い）
     sorted_speakers = sorted(voice_features.items(),
@@ -51,7 +79,6 @@ def _match_speakers_by_gender(voice_features: dict[str, dict],
 
         best_match = None
         if f0_gender == "male" and meta_male:
-            # 未使用の男性メタデータから選択
             for sp in meta_male:
                 if sp.get("id", "") not in used_meta:
                     best_match = sp
@@ -121,7 +148,7 @@ def run(url: str) -> Path:
     )
 
     # F0 の性別推定とメタデータの性別を照合して正しい対応関係を構築
-    speaker_mapping = _match_speakers_by_gender(voice_features, speaker_info)
+    speaker_mapping = _match_speakers_by_gender(voice_features, speaker_info, segments)
     name_map: dict[str, str] = {}
     matched_profiles: list[dict] = []
 
