@@ -33,7 +33,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Setup YouTube cookies
-        run: echo "${{ secrets.YT_COOKIES }}" > /tmp/cookies.txt
+        run: echo "${{ secrets.YT_COOKIES_B64 }}" | base64 -d > /tmp/cookies.txt
 
       - name: Run pipeline
         env:
