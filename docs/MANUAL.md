@@ -82,14 +82,11 @@ source .venv/bin/activate
 # Chrome から cookies をエクスポート
 yt-dlp --cookies-from-browser chrome --cookies cookies.txt --skip-download "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
-# YouTube/Google の cookies だけに絞る
-(head -4 cookies.txt | grep -E '^#|^$'; grep -E '\.youtube\.com|\.google\.com' cookies.txt) > cookies_yt.txt
-
-# GitHub Secret を更新
-gh secret set YT_COOKIES --repo silverbuckle/podcast-translator < cookies_yt.txt
+# YouTube/Google の cookies だけに絞って base64 エンコード → Secret に保存
+(head -4 cookies.txt | grep -E '^#|^$'; grep -E '\.youtube\.com|\.google\.com' cookies.txt) | base64 | gh secret set YT_COOKIES_B64 --repo silverbuckle/podcast-translator
 
 # ローカルの一時ファイルを削除
-rm cookies.txt cookies_yt.txt
+rm cookies.txt
 ```
 
 ### 症状
