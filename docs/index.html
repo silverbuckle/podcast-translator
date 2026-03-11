@@ -264,58 +264,23 @@
         const runUrl = runs.workflow_runs?.[0]?.html_url || '#';
 
         status.innerHTML = `
-          <div class="status-line done">OK ワークフロー起動</div>
-          <div class="status-line active">... 処理中 (<a href="${runUrl}" target="_blank" style="color:#2563eb">ログ</a>)</div>
+          <div class="status-line done">OK ワークフロー起動完了</div>
+          <div style="margin-top:12px;font-size:0.85rem;color:#aaa;line-height:1.6;">
+            処理には数分〜数十分かかります。<br>
+            このページを閉じても大丈夫です。
+          </div>
+          <a class="download-link" href="${runUrl}" target="_blank" style="margin-top:12px;">進捗・ダウンロード</a>
+          <div style="margin-top:8px;font-size:0.8rem;color:#888;">
+            完了後、Actions ページ下部の Artifacts から MP3 をダウンロード
+          </div>
         `;
-
-        // 3. ポーリング
-        if (runId) pollStatus(runId, url);
+        addToHistory(url, { runUrl, runId });
 
       } catch (e) {
         status.innerHTML = `<div class="status-line error">NG ${e.message}</div>`;
       } finally {
         btn.disabled = false;
         btn.textContent = '翻訳';
-      }
-    }
-
-    async function pollStatus(runId, inputUrl) {
-      const status = document.getElementById('status');
-
-      while (true) {
-        await sleep(15000);
-        try {
-          const data = await ghFetch(`/repos/${REPO}/actions/runs/${runId}`);
-          const runUrl = data.html_url || '#';
-
-          if (data.status === 'completed') {
-            if (data.conclusion === 'success') {
-              // アーティファクト取得
-              const arts = await ghFetch(
-                `/repos/${REPO}/actions/runs/${runId}/artifacts`
-              );
-              status.innerHTML = `
-                <div class="status-line done">OK 完了!</div>
-                <a class="download-link" href="${runUrl}" target="_blank">MP3 をダウンロード</a>
-                <div style="margin-top:8px;font-size:0.8rem;color:#888;">
-                  Actions ページ下部の Artifacts から translated-audio をダウンロード
-                </div>
-              `;
-              addToHistory(inputUrl, { runUrl });
-            } else {
-              status.innerHTML = `
-                <div class="status-line error">NG 処理失敗: ${data.conclusion}</div>
-                <div style="margin-top:8px;font-size:0.8rem;">
-                  <a href="${runUrl}" target="_blank" style="color:#2563eb;">ログを確認</a>
-                </div>
-              `;
-            }
-            return;
-          }
-          // まだ実行中
-        } catch (e) {
-          // ネットワークエラーは無視して継続
-        }
       }
     }
 
@@ -332,17 +297,34 @@
       renderHistory();
     }
 
+    async function checkRunStatus(runId, el) {
+      try {
+        el.textContent = '確認中...';
+        const data = await ghFetch(`/repos/${REPO}/actions/runs/${runId}`);
+        if (data.status === 'completed') {
+          el.textContent = data.conclusion === 'success' ? '完了 ✓' : '失敗 ✗';
+          el.style.color = data.conclusion === 'success' ? '#22c55e' : '#ef4444';
+        } else {
+          el.textContent = '処理中...';
+          el.style.color = '#f59e0b';
+        }
+      } catch (e) {
+        el.textContent = '確認失敗';
+      }
+    }
+
     function renderHistory() {
       const history = JSON.parse(localStorage.getItem('history') || '[]');
       if (history.length === 0) return;
 
       document.getElementById('history').style.display = 'block';
-      document.getElementById('history-list').innerHTML = history.map(item => `
+      document.getElementById('history-list').innerHTML = history.map((item, i) => `
         <div class="history-item">
           <div class="title">${item.url.length > 50 ? item.url.slice(0, 50) + '...' : item.url}</div>
           <div class="meta">
             ${new Date(item.date).toLocaleDateString('ja-JP')}
-            ${item.runUrl ? `<a href="${item.runUrl}" target="_blank">ログ</a>` : ''}
+            ${item.runUrl ? `<a href="${item.runUrl}" target="_blank">ログ/DL</a>` : ''}
+            ${item.runId ? `<span id="status-${i}" style="margin-left:8px;cursor:pointer;color:#2563eb;" onclick="checkRunStatus(${item.runId}, this)">状態確認</span>` : ''}
           </div>
         </div>
       `).join('');
