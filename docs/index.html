@@ -295,13 +295,11 @@
                 `/repos/${REPO}/actions/runs/${runId}/artifacts`
               );
               const audio = arts.artifacts?.find(a => a.name === 'translated-audio');
-              const dlUrl = audio
-                ? `${GH_API}/repos/${REPO}/actions/artifacts/${audio.id}/zip`
-                : null;
+              const artifactId = audio ? audio.id : null;
 
               status.innerHTML = `
                 <div class="status-line done">OK 完了!</div>
-                ${dlUrl ? `<a class="download-link" href="${dlUrl}" target="_blank">MP3 をダウンロード</a>` : ''}
+                ${artifactId ? `<a class="download-link" href="#" onclick="downloadArtifact(${artifactId}); return false;">MP3 をダウンロード</a>` : ''}
                 <div style="margin-top:8px;font-size:0.8rem;color:#888;">
                   <a href="${runUrl}" target="_blank" style="color:#2563eb;">ログを確認</a>
                 </div>
@@ -351,6 +349,25 @@
           </div>
         </div>
       `).join('');
+    }
+
+    // --- ダウンロード ---
+    async function downloadArtifact(artifactId) {
+      try {
+        const resp = await fetch(
+          `${GH_API}/repos/${REPO}/actions/artifacts/${artifactId}/zip`,
+          { headers: { 'Authorization': `Bearer ${getPat()}` } }
+        );
+        if (!resp.ok) throw new Error(`Download failed: ${resp.status}`);
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'translated-audio.zip';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch (e) {
+        alert('ダウンロード失敗: ' + e.message);
+      }
     }
 
     // --- ユーティリティ ---
