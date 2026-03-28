@@ -96,12 +96,13 @@ def _translate_batch(client: anthropic.Anthropic, preamble: str,
     transcript = "\n".join(transcript_lines)
     user_message += f"以下のテキストを日本語に翻訳してください:\n\n{transcript}"
 
-    response = client.messages.create(
+    with client.messages.stream(
         model="claude-sonnet-4-20250514",
         max_tokens=16384,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}],
-    )
+    ) as stream:
+        response = stream.get_final_message()
 
     text = response.content[0].text.strip()
 
