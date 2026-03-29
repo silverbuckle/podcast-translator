@@ -1,10 +1,15 @@
+#!/usr/bin/env python -u
 # main.py - パイプライン全体を実行
 
+import argparse
+import io
+import os
 import sys
 import json
 import hashlib
 from pathlib import Path
 
+from pydub import AudioSegment
 from download import download
 from analyze import analyze_metadata
 from diarize import diarize_and_transcribe
@@ -117,8 +122,30 @@ def _rename_speakers(segments: list[dict], name_map: dict[str, str]) -> list[dic
     return renamed
 
 
-def run(url: str) -> Path:
-    """URL → 日本語 MP3 の全パイプラインを実行する。"""
+def _parse_time(time_str: str) -> int:
+    """時間文字列をミリ秒に変換する。 H:MM:SS, MM:SS, SS 形式に対応。"""
+    parts = time_str.split(":")
+    parts = [int(p) for p in parts]
+    if len(parts) == 3:
+        return (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000
+    elif len(parts) == 2:
+        return (parts[0] * 60 + parts[1]) * 1000
+    else:
+        return parts[0] * 1000
+
+
+def _trim_audio(mp3_bytes: bytes, start_ms: int, end_ms: int) -> bytes:
+    """MP3 を指定範囲にトリミングする。"""
+    audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
+    trimmed = audio[start_ms:end_ms]
+    buf = io.BytesIO()
+    trimmed.export(buf, format="mp3", bitrate="64k")
+    return buf.getvalue()
+
+
+def run(url: str, start: str | None = None, end: str | None = None,
+        mode: str = "full") -> Path:
+    """URL → 日本語 MP3 (or テキスト) の全パイプラインを実行する。"""
     output_name = _make_output_name(url)
 
     # 1. 音声ダウンロード + メタデータ収集
@@ -128,6 +155,14 @@ def run(url: str) -> Path:
     mp3_bytes, metadata = download(url)
     print(f"  タイトル: {metadata.get('title', '?')}")
     print(f"  サイズ: {len(mp3_bytes) / 1024 / 1024:.1f} MB")
+
+    # 時間範囲指定があればトリミング
+    if start or end:
+        start_ms = _parse_time(start) if start else 0
+        end_ms = _parse_time(end) if end else len(AudioSegment.from_mp3(io.BytesIO(mp3_bytes)))
+        print(f"  トリミング: {start or '0:00'} ~ {end or '末尾'}")
+        mp3_bytes = _trim_audio(mp3_bytes, start_ms, end_ms)
+        print(f"  トリミング後サイズ: {len(mp3_bytes) / 1024 / 1024:.1f} MB")
 
     # 2. メタデータ分析（出演者推定）
     print("\n" + "=" * 60)
@@ -199,8 +234,28 @@ def run(url: str) -> Path:
             name_map.get(k, k): v for k, v in voice_features.items()
         }
 
-    # 翻訳結果を保存
+    # 全文翻訳テキストを保存（常に）
     SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    txt_path = SCRIPTS_DIR / f"{output_name}.txt"
+    with open(txt_path, "w", encoding="utf-8") as f:
+        title = metadata.get("title", "不明")
+        f.write(f"タイトル: {title}\n")
+        f.write(f"URL: {url}\n")
+        f.write("=" * 60 + "\n\n")
+        for seg in translated_segments:
+            f.write(f"[{seg['speaker']}]\n{seg['text']}\n\n")
+    print(f"  全文テキスト保存: {txt_path}")
+
+    # テキストのみモード: TTS をスキップ
+    if mode == "text":
+        print("\n" + "=" * 60)
+        print("完了! (テキストのみモード)")
+        print(f"  タイトル: {metadata.get('title', '?')}")
+        print(f"  出力: {txt_path}")
+        print("=" * 60)
+        return txt_path
+
+    # TTS用スクリプトを保存（JSON）
     script_path = SCRIPTS_DIR / f"{output_name}.json"
     with open(script_path, "w", encoding="utf-8") as f:
         json.dump({
@@ -209,7 +264,6 @@ def run(url: str) -> Path:
             "voice_features": voice_features,
             "segments": translated_segments,
         }, f, ensure_ascii=False, indent=2)
-    print(f"  スクリプト保存: {script_path}")
 
     # 5. TTS
     print("\n" + "=" * 60)
@@ -228,10 +282,12 @@ def run(url: str) -> Path:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("使い方: python src/main.py <URL>")
-        print("  例: python src/main.py https://www.youtube.com/watch?v=xxxxx")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="外国語 Podcast/YouTube → 日本語 MP3")
+    parser.add_argument("url", help="動画/ポッドキャストの URL")
+    parser.add_argument("--start", help="開始時間 (例: 1:40, 0:01:40)")
+    parser.add_argument("--end", help="終了時間 (例: 2:40, 0:02:40)")
+    parser.add_argument("--mode", choices=["full", "text"], default="full",
+                        help="翻訳モード (default: full, text=翻訳テキストのみ)")
+    args = parser.parse_args()
 
-    url = sys.argv[1]
-    run(url)
+    run(args.url, start=args.start, end=args.end, mode=args.mode)

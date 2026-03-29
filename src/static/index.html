@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Podcast Translator</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0a0a; color: #e0e0e0;
+    min-height: 100vh; display: flex; justify-content: center; align-items: flex-start;
+    padding: 40px 16px;
+  }
+  .container { max-width: 520px; width: 100%; }
+  h1 { font-size: 1.5rem; margin-bottom: 8px; color: #fff; }
+  .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 32px; }
+  label { display: block; font-size: 0.85rem; color: #aaa; margin-bottom: 6px; margin-top: 16px; }
+  input[type="text"] {
+    width: 100%; padding: 10px 12px; border: 1px solid #333; border-radius: 8px;
+    background: #1a1a1a; color: #fff; font-size: 0.95rem; outline: none;
+  }
+  input:focus { border-color: #4a9eff; }
+  .time-row { display: flex; gap: 12px; }
+  .time-row > div { flex: 1; }
+  button {
+    width: 100%; margin-top: 24px; padding: 12px; border: none; border-radius: 8px;
+    background: #2563eb; color: #fff; font-size: 1rem; font-weight: 600;
+    cursor: pointer; transition: background 0.2s;
+  }
+  button:hover { background: #1d4ed8; }
+  button:disabled { background: #333; color: #666; cursor: not-allowed; }
+  .status {
+    margin-top: 20px; padding: 16px; border-radius: 8px;
+    background: #111; border: 1px solid #222; font-size: 0.85rem; display: none;
+  }
+  .status.show { display: block; }
+  .status .message { color: #4ade80; }
+  .status .error { color: #f87171; }
+  .status a { color: #60a5fa; text-decoration: none; }
+  .status a:hover { text-decoration: underline; }
+  .logs {
+    margin-top: 12px; padding: 12px; border-radius: 6px;
+    background: #0d0d0d; border: 1px solid #1a1a1a;
+    font-family: 'SF Mono', 'Menlo', monospace; font-size: 0.75rem;
+    color: #888; white-space: pre-wrap; max-height: 200px; overflow-y: auto;
+    display: none;
+  }
+  .logs.show { display: block; }
+  .radio-group { display: flex; gap: 16px; margin-top: 6px; }
+  .radio-group label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: #ccc; font-size: 0.9rem; margin: 0; }
+  .radio-group input[type="radio"] { accent-color: #4a9eff; }
+  .history { margin-top: 32px; }
+  .history h3 { font-size: 0.9rem; color: #888; margin-bottom: 12px; }
+  .history-item {
+    padding: 12px; background: #111; border: 1px solid #222; border-radius: 8px;
+    margin-bottom: 8px; font-size: 0.85rem;
+  }
+  .history-item .title { color: #fff; margin-bottom: 4px; }
+  .history-item .meta { color: #666; font-size: 0.8rem; }
+  .history-item a { color: #60a5fa; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Podcast Translator</h1>
+  <p class="subtitle">外国語 Podcast / YouTube → 日本語に翻訳 (ローカル実行)</p>
+
+  <label>Podcast / YouTube URL</label>
+  <input type="text" id="url" placeholder="https://podcasts.apple.com/..." />
+
+  <div class="time-row">
+    <div>
+      <label>開始時間（任意）</label>
+      <input type="text" id="start" placeholder="0:00" />
+    </div>
+    <div>
+      <label>終了時間（任意）</label>
+      <input type="text" id="end" placeholder="30:00" />
+    </div>
+  </div>
+
+  <label>翻訳モード</label>
+  <div class="radio-group">
+    <label><input type="radio" name="mode" value="full" checked /> 通常版（音声生成あり）</label>
+    <label><input type="radio" name="mode" value="text" /> テキストのみ（TTS なし）</label>
+  </div>
+
+  <button id="submitBtn" onclick="submit()">翻訳開始</button>
+
+  <div class="status" id="status"></div>
+  <div class="logs" id="logs"></div>
+
+  <div class="history" id="historySection" style="display:none">
+    <h3>履歴</h3>
+    <div id="historyList"></div>
+  </div>
+</div>
+
+<script>
+const POLL_INTERVAL = 5000;
+
+function showStatus(msg, isError = false) {
+  const el = document.getElementById('status');
+  el.className = 'status show';
+  el.innerHTML = `<div class="${isError ? 'error' : 'message'}">${msg}</div>`;
+}
+
+function showLogs(text) {
+  const el = document.getElementById('logs');
+  if (text) {
+    el.className = 'logs show';
+    el.textContent = text;
+    el.scrollTop = el.scrollHeight;
+  } else {
+    el.className = 'logs';
+  }
+}
+
+async function submit() {
+  const url = document.getElementById('url').value.trim();
+  if (!url) { showStatus('URL を入力してください', true); return; }
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = '送信中...';
+  showLogs('');
+
+  try {
+    const body = { url };
+    const start = document.getElementById('start').value.trim();
+    const end = document.getElementById('end').value.trim();
+    const mode = document.querySelector('input[name="mode"]:checked').value;
+    if (start) body.start = start;
+    if (end) body.end = end;
+    body.mode = mode;
+
+    const resp = await fetch('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+
+    showStatus('ジョブを開始しました...');
+    pollJob(data.job_id);
+
+  } catch (e) {
+    showStatus(`エラー: ${e.message}`, true);
+    btn.disabled = false;
+    btn.textContent = '翻訳開始';
+  }
+}
+
+async function pollJob(jobId) {
+  const btn = document.getElementById('submitBtn');
+  try {
+    const resp = await fetch(`/api/jobs/${jobId}`);
+    const job = await resp.json();
+
+    if (job.logs_tail) showLogs(job.logs_tail);
+
+    if (job.status === 'completed') {
+      const path = job.result;
+      const filename = path.split('/').pop();
+      const isText = filename.endsWith('.txt');
+      const relPath = path.includes('/scripts/') ?
+        `scripts/${filename}` : `audio/${filename}`;
+      const icon = isText ? '📄' : '🎵';
+
+      showStatus(
+        `✅ 完了!<br><br>${icon} <a href="/files/${relPath}" download="${filename}">${filename} をダウンロード</a>`
+      );
+      btn.disabled = false;
+      btn.textContent = '翻訳開始';
+      loadHistory();
+      return;
+    }
+
+    if (job.status === 'failed') {
+      showStatus(`❌ 失敗: ${job.error || '不明なエラー'}`, true);
+      btn.disabled = false;
+      btn.textContent = '翻訳開始';
+      loadHistory();
+      return;
+    }
+
+    // running or queued
+    const elapsed = job.elapsed || 0;
+    const min = Math.floor(elapsed / 60);
+    const sec = elapsed % 60;
+    const statusLabel = job.status === 'queued' ? '待機中' : '処理中';
+    showStatus(`⏳ ${statusLabel}... (${min}:${String(sec).padStart(2, '0')} 経過)`);
+    setTimeout(() => pollJob(jobId), POLL_INTERVAL);
+
+  } catch (e) {
+    showStatus(`ポーリングエラー: ${e.message}`, true);
+    btn.disabled = false;
+    btn.textContent = '翻訳開始';
+  }
+}
+
+async function loadHistory() {
+  try {
+    const resp = await fetch('/api/jobs');
+    const jobs = await resp.json();
+    const completed = jobs.filter(j => j.status === 'completed' || j.status === 'failed');
+    const section = document.getElementById('historySection');
+    const list = document.getElementById('historyList');
+    if (!completed.length) { section.style.display = 'none'; return; }
+
+    section.style.display = 'block';
+    list.innerHTML = completed.slice(0, 10).map(j => {
+      const d = new Date((j.finished_at || j.created_at) * 1000);
+      const dateStr = `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+      const shortUrl = j.url.length > 55 ? j.url.slice(0, 55) + '...' : j.url;
+      const icon = j.status === 'completed' ? '✅' : '❌';
+      let dl = '';
+      if (j.result) {
+        const fn = j.result.split('/').pop();
+        const rel = j.result.includes('/scripts/') ? `scripts/${fn}` : `audio/${fn}`;
+        dl = ` · <a href="/files/${rel}" download="${fn}">DL</a>`;
+      }
+      return `<div class="history-item">
+        <div class="title">${icon} ${shortUrl}</div>
+        <div class="meta">${dateStr} · ${j.mode || 'full'}${dl}</div>
+      </div>`;
+    }).join('');
+  } catch (_) {}
+}
+
+window.onload = loadHistory;
+</script>
+</body>
+</html>
