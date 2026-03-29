@@ -6,6 +6,7 @@ pydub
 audioop-lts; python_version >= "3.13"
 requests
 yt-dlp
+yt-dlp-ejs
 feedparser
 fastapi
 uvicorn[standard]

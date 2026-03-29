@@ -66,6 +66,12 @@ python src/main.py "URL" --start 1:40 --end 30:00
 | Podcast RSS | `https://feeds.example.com/podcast.xml` | 最新エピソードを処理 |
 | 直接音声 | `https://example.com/episode.mp3` | メタデータなし |
 
+## 前提条件（システム）
+
+- **deno** — yt-dlp の YouTube n challenge 解決に必要: `brew install deno`
+- **ffmpeg** — 音声変換: `brew install ffmpeg`
+- **Chrome** — cookies 取得に使用（yt-dlp の `--cookies-from-browser chrome`）
+
 ## 必要な API キー
 
 `.env` ファイルに設定:
