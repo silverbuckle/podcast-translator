@@ -1,14 +1,9 @@
 # translate.py - Claude で翻訳
 # 長い原稿は自動的にバッチ分割して翻訳
 
-import os
 import json
-from pathlib import Path
 
-import anthropic
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).parent.parent / ".env")
+from claude_api import call_json
 
 # バッチ分割の設定
 BATCH_MAX_LINES = 80      # 1バッチあたりの最大行数
@@ -78,10 +73,9 @@ def _build_preamble(context: str = "",
     return "\n\n".join(parts)
 
 
-def _translate_batch(client: anthropic.Anthropic, preamble: str,
-                     transcript_lines: list[str],
-                     prev_context: list[dict] | None = None) -> list[dict]:
-    """1バッチ分の翻訳を実行する。"""
+def _build_user_message(preamble: str, transcript_lines: list[str],
+                        prev_context: list[dict] | None = None) -> str:
+    """翻訳リクエストのユーザーメッセージを構築する。"""
     user_message = ""
 
     if preamble:
@@ -95,22 +89,40 @@ def _translate_batch(client: anthropic.Anthropic, preamble: str,
 
     transcript = "\n".join(transcript_lines)
     user_message += f"以下のテキストを日本語に翻訳してください:\n\n{transcript}"
+    return user_message
 
-    with client.messages.stream(
+
+def _call_and_parse(user_message: str) -> list[dict]:
+    """Claude APIを呼び出してJSONをパースする。途中切れ時はValueErrorを送出。"""
+    return call_json(
         model="claude-sonnet-4-20250514",
         max_tokens=16384,
         system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}],
-    ) as stream:
-        response = stream.get_final_message()
+        user_message=user_message,
+    )
 
-    text = response.content[0].text.strip()
 
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1])
+def _translate_batch(preamble: str, transcript_lines: list[str],
+                     prev_context: list[dict] | None = None) -> list[dict]:
+    """1バッチ分の翻訳を実行する。途中切れ時はバッチを半分に分割してリトライ。"""
+    user_message = _build_user_message(preamble, transcript_lines, prev_context)
 
-    return json.loads(text)
+    try:
+        return _call_and_parse(user_message)
+    except (json.JSONDecodeError, ValueError) as e:
+        if len(transcript_lines) <= 10:
+            raise  # これ以上分割できない
+
+        mid = len(transcript_lines) // 2
+        print(f"    ⚠ レスポンス途中切れ ({e})。バッチを分割してリトライ...")
+
+        # 前半
+        first_half = _translate_batch(preamble, transcript_lines[:mid], prev_context)
+        # 後半（前半末尾をコンテキストに）
+        ctx = first_half[-CONTEXT_OVERLAP:] if first_half else None
+        second_half = _translate_batch(preamble, transcript_lines[mid:], ctx)
+
+        return first_half + second_half
 
 
 def translate(transcript: str, speakers: dict | None = None,
@@ -129,11 +141,6 @@ def translate(transcript: str, speakers: dict | None = None,
     Returns:
         [{"speaker": "Speaker_1", "text": "..."}, ...]
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY が .env に設定されていません")
-
-    client = anthropic.Anthropic(api_key=api_key)
     preamble = _build_preamble(context, speaker_profiles, speakers)
 
     lines = [l for l in transcript.split("\n") if l.strip()]
@@ -142,7 +149,7 @@ def translate(transcript: str, speakers: dict | None = None,
     # 短い原稿はそのまま翻訳
     if len(lines) <= BATCH_MAX_LINES:
         print(f"\nClaude 翻訳中... ({total_chars} 文字)")
-        result = _translate_batch(client, preamble, lines)
+        result = _translate_batch(preamble, lines)
         print(f"  翻訳完了: {len(result)} セグメント")
         return result
 
@@ -158,7 +165,7 @@ def translate(transcript: str, speakers: dict | None = None,
 
     for i, batch in enumerate(batches):
         print(f"  バッチ {i + 1}/{len(batches)} ({len(batch)} 行)...")
-        result = _translate_batch(client, preamble, batch, prev_context)
+        result = _translate_batch(preamble, batch, prev_context)
         all_results.extend(result)
         print(f"    → {len(result)} セグメント")
 

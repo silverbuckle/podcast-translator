@@ -1,13 +1,6 @@
 # analyze.py - メタデータから出演者情報を推定する
 
-import os
-import json
-from pathlib import Path
-
-import anthropic
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).parent.parent / ".env")
+from claude_api import has_api_key, call_json
 
 SYSTEM_PROMPT = """\
 あなたはポッドキャスト/動画のメタデータを分析し、出演者情報を推定するアシスタントです。
@@ -71,8 +64,7 @@ def analyze_metadata(metadata: dict) -> dict:
             "confidence": str,
         }
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not has_api_key():
         return _fallback()
 
     # 分析に使う情報を構築
@@ -102,20 +94,12 @@ def analyze_metadata(metadata: dict) -> dict:
     print(f"\n  メタデータ分析中 (Claude)...")
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
+        result = call_json(
             model="claude-haiku-4-5",
             max_tokens=1024,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
+            user_message=user_message,
         )
-
-        text = response.content[0].text.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            text = "\n".join(lines[1:-1])
-
-        result = json.loads(text)
 
         # 結果を表示
         print(f"  推定話者数: {result.get('num_speakers', '?')}"
