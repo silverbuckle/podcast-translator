@@ -4,6 +4,7 @@
 import argparse
 import io
 import os
+import shutil
 import sys
 import json
 import hashlib
@@ -17,6 +18,17 @@ from translate import translate
 from tts import tts
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "output" / "scripts"
+DROPBOX_DIR = Path.home() / "Dropbox" / "podcast-translator"
+
+
+def _copy_to_dropbox(src: Path):
+    """結果ファイルを Dropbox にコピーする。Dropbox フォルダがなければスキップ。"""
+    if not DROPBOX_DIR.parent.exists():
+        return
+    DROPBOX_DIR.mkdir(parents=True, exist_ok=True)
+    dest = DROPBOX_DIR / src.name
+    shutil.copy2(src, dest)
+    print(f"  Dropbox コピー: {dest}")
 
 
 def _make_output_name(url: str) -> str:
@@ -248,6 +260,7 @@ def run(url: str, start: str | None = None, end: str | None = None,
 
     # テキストのみモード: TTS をスキップ
     if mode == "text":
+        _copy_to_dropbox(txt_path)
         print("\n" + "=" * 60)
         print("完了! (テキストのみモード)")
         print(f"  タイトル: {metadata.get('title', '?')}")
@@ -270,6 +283,9 @@ def run(url: str, start: str | None = None, end: str | None = None,
     print("STEP 5: 音声生成 (Gemini TTS)")
     print("=" * 60)
     mp3_path = tts(translated_segments, output_name, voice_features=voice_features)
+
+    _copy_to_dropbox(mp3_path)
+    _copy_to_dropbox(txt_path)
 
     print("\n" + "=" * 60)
     print("完了!")
