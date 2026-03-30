@@ -50,6 +50,19 @@ def _diarize(audio_path: str, min_speakers: int | None = None,
 
     print("  pyannote-audio 話者分離中...")
 
+    # クラスタリング閾値を下げて、似た声の話者もより積極的に分離する
+    # デフォルト (~0.7) では同性・同年代の話者が統合されやすい
+    try:
+        params = pipeline.parameters(instantiated=True)
+        current_threshold = params.get("clustering", {}).get("threshold", 0.7)
+        pipeline.instantiate({
+            **params,
+            "clustering": {**params.get("clustering", {}), "threshold": 0.45},
+        })
+        print(f"    クラスタリング閾値: {current_threshold} → 0.45")
+    except Exception as e:
+        print(f"    閾値調整スキップ: {e}")
+
     kwargs = {}
     if min_speakers is not None:
         kwargs["min_speakers"] = min_speakers
@@ -227,7 +240,7 @@ def _analyze_voice(mp3_bytes: bytes, segments: list[dict],
                    diarization_segments: list[dict]) -> dict[str, dict]:
     """各話者の声質特徴を分析する（自己相関法による F0 推定）。"""
     try:
-        audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
+        audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes)).set_channels(1)
         samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
         sample_rate = audio.frame_rate
 
@@ -252,7 +265,10 @@ def _analyze_voice(mp3_bytes: bytes, segments: list[dict],
             combined = np.concatenate(speaker_samples)
             rms = np.sqrt(np.mean(combined ** 2))
 
-            f0 = _estimate_f0_autocorr(combined, sample_rate)
+            # F0 推定は最大30秒分のサンプルに制限（計算量対策）
+            max_f0_samples = 30 * sample_rate
+            f0_input = combined[:max_f0_samples] if len(combined) > max_f0_samples else combined
+            f0 = _estimate_f0_autocorr(f0_input, sample_rate)
 
             if f0 < 150:
                 pitch = "low"
@@ -288,7 +304,7 @@ def _analyze_voice(mp3_bytes: bytes, segments: list[dict],
 def _merge_similar_speakers(segments: list[dict], diarization_segments: list[dict],
                             mp3_bytes: bytes) -> tuple[list[dict], list[dict]]:
     """F0 が近い話者を統合して過剰分割を修正する。"""
-    audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
+    audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes)).set_channels(1)
     samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
     sample_rate = audio.frame_rate
 
@@ -307,7 +323,9 @@ def _merge_similar_speakers(segments: list[dict], diarization_segments: list[dic
                 speaker_samples.append(samples[start_idx:end_idx])
         if speaker_samples:
             combined = np.concatenate(speaker_samples)
-            speaker_f0[speaker] = _estimate_f0_autocorr(combined, sample_rate)
+            max_f0_samples = 30 * sample_rate
+            f0_input = combined[:max_f0_samples] if len(combined) > max_f0_samples else combined
+            speaker_f0[speaker] = _estimate_f0_autocorr(f0_input, sample_rate)
 
     merge_map: dict[str, str] = {}
     sorted_speakers = sorted(speaker_f0.keys(), key=lambda s: speaker_f0[s])
